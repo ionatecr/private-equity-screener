@@ -35,5 +35,14 @@ def calcular_ratios(df):
 if __name__=="__main__":
     financieros=pd.read_csv(CARPETA_DATOS/"financieros.csv")
     ratios=calcular_ratios(financieros)
+    years_por_empresa=ratios.groupby("ticker")["year"].count()
+    # print(years_por_empresa)
+    validas=[]
+    for ticker in years_por_empresa.index:
+        if years_por_empresa[ticker]>=6:
+            validas.append(ticker)
+        else:
+            print("Se quita", ticker,"por tener menos de 6 años de datos")
+    ratios = ratios[ratios["ticker"].isin(validas)]
     ratios.to_csv(CARPETA_DATOS/"ratios.csv",index=False)
     print(ratios[["ticker","year" , "ingresos", "margen_ebitda" ,"crecimiento_ingresos","conversion_caja", "deuda_neta_ebitda"]].tail(10))
