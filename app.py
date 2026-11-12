@@ -3,6 +3,8 @@ from pathlib import Path
 import pandas as pd
 import plotly.graph_objects as go
 from dash import Dash, Input,Output,dcc, html
+from flask_restful import Api,Resource, abort , reqparse
+from plotly.subplots import make_subplots
 
 import scoring
 
@@ -10,6 +12,7 @@ CARPETA_DATOS = Path(__file__).resolve().parent/"Datos"
 
 ratios= pd.read_csv(CARPETA_DATOS/"ratios.csv")
 #print(ratios)
+predicciones=pd.read_csv(CARPETA_DATOS/"predicciones.csv")
 
 YEAR_DATOS =scoring.ultimo_year_completo(ratios)
 
@@ -32,6 +35,27 @@ def formato_porcentaje(valor):
     return str(round(valor * 100,1))+" %"
 
 
+def formato_veces(valor):
+    if pd.isna(valor):
+        return "-"
+    valor=round(valor,1)
+    if valor==0:
+        valor=0.0
+    return str(valor)+"x"
+
+
+def formato_millones(valor):
+    if pd.isna(valor):
+        return "-"
+    return str(round(valor/1000000))+" M"
+
+
+def tabla_a_lista(df):
+    df=df.round(4)
+    df= df.astype(object).where(df.notna(),None)
+    return df.to_dict(orient="records")
+
+
 def crear_pregunta(clave):
     return html.Div(
         children=[
@@ -45,6 +69,11 @@ preguntas= []
 for clave in scoring.PREGUNTAS:
     preguntas.append(crear_pregunta(clave))
 
+options_empresas=[]
+for ticker in sorted(ratios["ticker"].unique()):
+    nombre=ratios[ratios["ticker"]==ticker]["nombre"].iloc[0]
+    options_empresas.append({"label": ticker+" - "+nombre,"value": ticker})
+
 options_top= []
 for n in [10,20,40]:
     options_top.append({"label": "Top "+str(n),"value": n})
@@ -52,11 +81,53 @@ for n in [10,20,40]:
 app=Dash(__name__)
 server=app.server
 
+api =Api(server)
+
+argumentos =reqparse.RequestParser()
+argumentos.add_argument("crecimiento", type=int,default=3,location= "args")
+argumentos.add_argument("caja",type=int,default=3 , location="args")
+argumentos.add_argument("deuda",type=int,default=3 , location="args")
+argumentos.add_argument("capex",type = int,default =3, location="args")
+argumentos.add_argument("tamano",type=int ,default =3, location="args")
+argumentos.add_argument("top", type=int,default=10,location="args")
+
+
+class Ranking(Resource):
+
+    def get(self):
+        args=argumentos.parse_args()
+        respuestas={}
+        for clave in scoring.PREGUNTAS:
+            respuestas[clave]=args[clave]
+        pesos = scoring.test_a_pesos(respuestas)
+        umbrales=scoring.test_a_umbrales(respuestas)
+        ranking= scoring.puntuar(ratios, pesos,umbrales)
+        ranking=ranking[["ranking", "ticker" , "nombre","score","cumple_deuda"]].head(args["top"])
+        return {"respuestas": respuestas, "pesos": pesos,"ranking": tabla_a_lista(ranking)}
+
+
+class Empresa(Resource):
+
+    def get(self, ticker):
+        ticker=ticker.upper()
+        historico =ratios[ratios["ticker"]==ticker]
+        if len(historico)==0:
+            abort(404,message="No existe la empresa "+ticker)
+        columnas=["year" , "ingresos","ebitda", "margen_ebitda","crecimiento_ingresos" ,"capex_ventas","conversion_caja","deuda_neta_ebitda"]
+        prediccion=predicciones[predicciones["ticker"]==ticker]
+        return {"ticker": ticker,"historico": tabla_a_lista(historico[columnas]),"prediccion": tabla_a_lista(prediccion)}
+
+
+api.add_resource(Ranking,"/api/ranking")
+api.add_resource(Empresa, "/api/empresa/<string:ticker>")
+
 app.layout=html.Div(
     style={"fontFamily": "Arial","backgroundColor": "#f2f2f2"},
     children=[
         html.H1("Private Equity Screener",style={"textAlign": "center" ,"paddingTop": "15px"}),
         html.P("Ranking de empresas según tu tesis de inversión. Datos de la SEC, año "+str(YEAR_DATOS), style={"textAlign": "center"}),
+        dcc.Tabs(children =[
+        dcc.Tab(label="Ranking",children=[
         html.Div(
             style ={"display": "flex"} ,
             children=[
@@ -74,6 +145,18 @@ app.layout=html.Div(
                 ),
             ],
         ),
+        ]),
+        dcc.Tab(label ="Ficha de empresa" , children=[
+            html.Div(
+                style={"backgroundColor": "white","padding": "15px","margin": "10px", "border": "1px solid #dddddd","borderRadius": "5px"},
+                children=[
+                    dcc.Dropdown(options =options_empresas, value="AAPL",id= "dropdown_empresa",clearable=False,style={"width": "400px"}),
+                    html.Div(id="datos_empresa",style = {"display": "flex","justifyContent": "space-around","marginTop": "15px"}),
+                    dcc.Graph(id="grafico_empresa"),
+                ],
+            ) ,
+        ]),
+        ]),
     ],
 )
 
@@ -124,6 +207,36 @@ def actualizar(crecimiento,caja, deuda,capex, tamano,top):
         ]))
     tabla = html.Table(filas ,style= {"width": "100%"})
     return texto,fig,tabla
+
+
+@app.callback(
+    Output("datos_empresa", "children"),
+    Output("grafico_empresa","figure"),
+    Input("dropdown_empresa","value"),
+)
+def ficha_empresa(ticker):
+    df=ratios[ratios["ticker"]==ticker]
+    if YEAR_DATOS in list(df["year"]):
+        ultima=df[df["year"]==YEAR_DATOS].iloc[0]
+    else:
+        ultima= df[df["year"]==df["year"].max()].iloc[0]
+    prediccion= predicciones[predicciones["ticker"]== ticker]
+    datos=[
+        html.Div([html.P("Ingresos "+str(ultima["year"])), html.H3(formato_millones(ultima["ingresos"]))]),
+        html.Div([html.P("Crecimiento"),html.H3(formato_porcentaje(ultima["crecimiento_ingresos"]))]),
+        html.Div([html.P("Margen EBITDA"),html.H3(formato_porcentaje(ultima["margen_ebitda"]))]),
+        html.Div([html.P("Deuda neta / EBITDA"),html.H3(formato_veces(ultima["deuda_neta_ebitda"]))]),
+    ]
+    fig=make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Bar(x=df["year"], y = df["ingresos"]/1000000 , name= "Ingresos (M USD)"),secondary_y=False)
+    fig.add_trace(go.Scatter(x = df["year"],y = df["margen_ebitda"] * 100,name="Margen EBITDA (%)",mode = "lines+markers"),secondary_y = True)
+    if len(prediccion) > 0:
+        year_pred=prediccion["year_prediccion"].iloc[0]
+        margen_pred=prediccion["pred_margen_ebitda"].iloc[0]
+        fig.add_trace(go.Scatter(x=[year_pred],y=[margen_pred * 100], name="Margen previsto (%)",mode="markers" , marker=dict(size=12, symbol="star")), secondary_y=True)
+        datos.append(html.Div([html.P("Margen previsto "+str(year_pred)) , html.H3(formato_porcentaje(margen_pred))]))
+    fig.update_layout(title=ticker+": ingresos y margen EBITDA")
+    return datos,fig
 
 
 if __name__=="__main__":

@@ -4,3 +4,5 @@ requests
 dash
 plotly
 scikit-learn
+Flask
+Flask-RESTful
