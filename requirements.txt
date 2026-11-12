@@ -3,3 +3,4 @@ numpy
 requests
 dash
 plotly
+scikit-learn

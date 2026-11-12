@@ -102,8 +102,9 @@ def actualizar(crecimiento,caja, deuda,capex, tamano,top):
         texto.append(html.P(NOMBRES_CRITERIOS[criterio]+": "+str(round(pesos[criterio] * 100))+" %"))
 
     fig=go.Figure()
-    fig.add_trace(go.Bar(x=mejores["ticker"],y=mejores["score"],marker_color="#1f77b4"))
-    fig.update_layout(title= "Score de 0 a 100",yaxis_range=[0, 100])
+    for criterio in NOMBRES_CRITERIOS:
+        fig.add_trace(go.Bar(x=mejores["ticker"],y=mejores["aporte_"+criterio],name=NOMBRES_CRITERIOS[criterio]))
+    fig.update_layout(title= "Score de 0 a 100 (lo que aporta cada criterio)",yaxis_range=[0, 100],barmode="stack")
 
     filas=[html.Tr([html.Th("#"), html.Th("Ticker"), html.Th("Empresa"), html.Th("Score"), html.Th("Crecimiento"), html.Th("Margen EBITDA"), html.Th("Deuda")])]
     for i in range(len(mejores)):

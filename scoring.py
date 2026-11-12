@@ -75,7 +75,8 @@ def puntuar(ratios,pesos, umbrales):
             percentil=1-percentil+1/len(df)
         percentil=percentil.fillna(0.5)
         #print(percentil)
-        df["score"]=df["score"]+percentil * pesos[criterio] * 100
+        df["aporte_"+criterio]=percentil * pesos[criterio] * 100
+        df["score"]=df["score"]+df["aporte_"+criterio]
     df["score"]=df["score"].round(1)
     df["cumple_deuda"] = df["deuda_neta_ebitda"].fillna(0)<=umbrales["deuda_maxima"]
     df = df.sort_values("score",ascending=False)

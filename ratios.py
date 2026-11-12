@@ -25,7 +25,6 @@ def calcular_ratios(df):
     df["capex_ventas"]=dividir(df["capex"],df["ingresos"])
     df["flujo_caja_libre"]=df["flujo_operativo"]-df["capex"]
     df["conversion_caja"]=dividir(df["flujo_caja_libre"] ,df["ebitda"])
-    #df["deuda_neta"]=df["deuda"].fillna(0)-df["caja"].fillna(0)
     df["deuda_neta"]= df["deuda"]-df["caja"].fillna(0)
     df["deuda_neta_ebitda"]=dividir(df["deuda_neta"],df["ebitda"])
     df.loc[df["ebitda"]<=0, "deuda_neta_ebitda"]=np.nan
