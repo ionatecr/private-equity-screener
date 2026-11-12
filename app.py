@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, Input,Output,dcc, html
-from flask_restful import Api,Resource, abort , reqparse
+from dash import Dash, Input,Output,ctx, dcc,html
 from plotly.subplots import make_subplots
 
 import scoring
+from api import crear_api
 
 CARPETA_DATOS = Path(__file__).resolve().parent/"Datos"
 
@@ -50,12 +50,6 @@ def formato_millones(valor):
     return str(round(valor/1000000))+" M"
 
 
-def tabla_a_lista(df):
-    df=df.round(4)
-    df= df.astype(object).where(df.notna(),None)
-    return df.to_dict(orient="records")
-
-
 def crear_pregunta(clave):
     return html.Div(
         children=[
@@ -74,6 +68,12 @@ for ticker in sorted(ratios["ticker"].unique()):
     nombre=ratios[ratios["ticker"]==ticker]["nombre"].iloc[0]
     options_empresas.append({"label": ticker+" - "+nombre,"value": ticker})
 
+options_tesis =[
+    {"label": "Tesis Value","value": "Value"},
+    {"label": "Tesis Growth","value": "Growth"},
+    {"label": "Mi tesis","value": "Mi tesis"},
+]
+
 options_top= []
 for n in [10,20,40]:
     options_top.append({"label": "Top "+str(n),"value": n})
@@ -81,45 +81,7 @@ for n in [10,20,40]:
 app=Dash(__name__)
 server=app.server
 
-api =Api(server)
-
-argumentos =reqparse.RequestParser()
-argumentos.add_argument("crecimiento", type=int,default=3,location= "args")
-argumentos.add_argument("caja",type=int,default=3 , location="args")
-argumentos.add_argument("deuda",type=int,default=3 , location="args")
-argumentos.add_argument("capex",type = int,default =3, location="args")
-argumentos.add_argument("tamano",type=int ,default =3, location="args")
-argumentos.add_argument("top", type=int,default=10,location="args")
-
-
-class Ranking(Resource):
-
-    def get(self):
-        args=argumentos.parse_args()
-        respuestas={}
-        for clave in scoring.PREGUNTAS:
-            respuestas[clave]=args[clave]
-        pesos = scoring.test_a_pesos(respuestas)
-        umbrales=scoring.test_a_umbrales(respuestas)
-        ranking= scoring.puntuar(ratios, pesos,umbrales)
-        ranking=ranking[["ranking", "ticker" , "nombre","score","cumple_deuda"]].head(args["top"])
-        return {"respuestas": respuestas, "pesos": pesos,"ranking": tabla_a_lista(ranking)}
-
-
-class Empresa(Resource):
-
-    def get(self, ticker):
-        ticker=ticker.upper()
-        historico =ratios[ratios["ticker"]==ticker]
-        if len(historico)==0:
-            abort(404,message="No existe la empresa "+ticker)
-        columnas=["year" , "ingresos","ebitda", "margen_ebitda","crecimiento_ingresos" ,"capex_ventas","conversion_caja","deuda_neta_ebitda"]
-        prediccion=predicciones[predicciones["ticker"]==ticker]
-        return {"ticker": ticker,"historico": tabla_a_lista(historico[columnas]),"prediccion": tabla_a_lista(prediccion)}
-
-
-api.add_resource(Ranking,"/api/ranking")
-api.add_resource(Empresa, "/api/empresa/<string:ticker>")
+crear_api(server)
 
 app.layout=html.Div(
     style={"fontFamily": "Arial","backgroundColor": "#f2f2f2"},
@@ -133,7 +95,7 @@ app.layout=html.Div(
             children=[
                 html.Div(
                     style=estilo_izquierda,
-                    children=[html.H3("Test del inversor")]+preguntas+[html.H3("Pesos"),html.Div(id= "texto_pesos")],
+                    children=[html.H3("Test del inversor"),html.Div([html.Button("Value" ,id ="boton_value", n_clicks=0), html.Button("Growth",id="boton_growth",n_clicks=0),html.Button("Neutra",id="boton_neutra",n_clicks = 0)])]+preguntas+[html.H3("Pesos"),html.Div(id= "texto_pesos")],
                 ),
                 html.Div(
                     style=estilo_derecha,
@@ -156,9 +118,43 @@ app.layout=html.Div(
                 ],
             ) ,
         ]),
+        dcc.Tab(label="Comparar tesis",children = [
+            html.Div(
+                style={"backgroundColor": "white","padding": "15px","margin": "10px", "border": "1px solid #dddddd","borderRadius": "5px"},
+                children=[
+                    html.Div(style={"display": "flex"}, children=[
+                        dcc.Dropdown(options= options_tesis,value="Value",id="dropdown_tesis_1",clearable= False,style={"width": "250px","marginRight": "20px"}),
+                        dcc.Dropdown(options = options_tesis,value="Growth",id="dropdown_tesis_2", clearable=False,style={"width": "250px"}),
+                    ]),
+                    html.Div(id="texto_comparar",style= {"marginTop": "15px"}),
+                    dcc.Graph(id="grafico_comparar"),
+                ],
+            ) ,
+        ]),
         ]),
     ],
 )
+
+
+@app.callback(
+    Output("slider_crecimiento","value"),
+    Output("slider_caja" ,"value"),
+    Output("slider_deuda","value"),
+    Output("slider_capex", "value"),
+    Output("slider_tamano", "value"),
+    Input("boton_value","n_clicks"),
+    Input("boton_growth","n_clicks"),
+    Input("boton_neutra", "n_clicks"),
+    prevent_initial_call = True,
+)
+def elegir_tesis(n_value, n_growth,n_neutra):
+    if ctx.triggered_id=="boton_value":
+        respuestas=scoring.TESIS["Value"]
+    elif ctx.triggered_id== "boton_growth":
+        respuestas=scoring.TESIS["Growth"]
+    else:
+        respuestas={"crecimiento": 3, "caja": 3,"deuda": 3,"capex": 3,"tamano": 3}
+    return respuestas["crecimiento"], respuestas["caja"], respuestas["deuda"], respuestas["capex"], respuestas["tamano"]
 
 
 @app.callback(
@@ -237,6 +233,51 @@ def ficha_empresa(ticker):
         datos.append(html.Div([html.P("Margen previsto "+str(year_pred)) , html.H3(formato_porcentaje(margen_pred))]))
     fig.update_layout(title=ticker+": ingresos y margen EBITDA")
     return datos,fig
+
+
+@app.callback(
+    Output("texto_comparar" , "children"),
+    Output("grafico_comparar", "figure"),
+    Input("dropdown_tesis_1","value"),
+    Input("dropdown_tesis_2","value"),
+    Input("slider_crecimiento","value"),
+    Input("slider_caja","value"),
+    Input("slider_deuda","value"),
+    Input("slider_capex","value") ,
+    Input("slider_tamano","value"),
+)
+def comparar_tesis(tesis_1,tesis_2,crecimiento, caja,deuda ,capex,tamano):
+    mi_tesis= {"crecimiento": crecimiento, "caja": caja,"deuda": deuda,"capex": capex, "tamano": tamano}
+    if tesis_1=="Mi tesis":
+        respuestas_1=mi_tesis
+    else:
+        respuestas_1 = scoring.TESIS[tesis_1]
+    if tesis_2=="Mi tesis":
+        respuestas_2 =mi_tesis
+    else:
+        respuestas_2=scoring.TESIS[tesis_2]
+    ranking_1= scoring.ranking_respuestas(ratios,respuestas_1)
+    ranking_2=scoring.ranking_respuestas(ratios,respuestas_2)
+    juntos=ranking_1[["ticker", "ranking"]].merge(ranking_2[["ticker","ranking"]], on="ticker",suffixes=("_1","_2"))
+    juntos["salto"]= juntos["ranking_1"]-juntos["ranking_2"]
+    en_comun= 0
+    top_2=list(ranking_2["ticker"].head(10))
+    for ticker in ranking_1["ticker"].head(10):
+        if ticker in top_2:
+            en_comun=en_comun+1
+    mayor_subida=juntos.sort_values("salto",ascending=False).iloc[0]
+    mayor_bajada=juntos.sort_values("salto").iloc[0]
+    texto=[
+        html.P("Empresas en común en el top 10: "+str(en_comun)+" de 10"),
+        html.P("La que más sube con "+tesis_2+": "+mayor_subida["ticker"]+" (del "+str(mayor_subida["ranking_1"])+" al "+str(mayor_subida["ranking_2"])+")"),
+        html.P("La que más baja con "+tesis_2+": "+mayor_bajada["ticker"]+" (del "+str(mayor_bajada["ranking_1"])+" al "+str(mayor_bajada["ranking_2"])+")"),
+    ]
+    fig=go.Figure()
+    fig.add_trace(go.Scatter(x = juntos["ranking_1"], y=juntos["ranking_2"],text=juntos["ticker"],mode="markers+text",textposition= "top center"))
+    fig.update_xaxes(title="Puesto con "+tesis_1, autorange="reversed")
+    fig.update_yaxes(title = "Puesto con "+tesis_2,autorange="reversed")
+    fig.update_layout(height=550)
+    return texto,fig
 
 
 if __name__=="__main__":

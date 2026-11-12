@@ -21,6 +21,11 @@ CRITERIOS={
     "ingresos": "mayor" ,
 }
 
+TESIS={
+    "Value": {"crecimiento": 1,"caja": 5,"deuda": 2,"capex": 1,"tamano": 3},
+    "Growth": {"crecimiento": 5,"caja": 2, "deuda": 3,"capex": 4,"tamano": 3},
+}
+
 
 def test_a_pesos(respuestas):
     importancias={}
@@ -82,6 +87,12 @@ def puntuar(ratios,pesos, umbrales):
     df = df.sort_values("score",ascending=False)
     df["ranking"]=range(1,len(df)+1)
     return df
+
+
+def ranking_respuestas(ratios,respuestas):
+    pesos=test_a_pesos(respuestas)
+    umbrales=test_a_umbrales(respuestas)
+    return puntuar(ratios,pesos,umbrales)
 
 
 def hacer_test():

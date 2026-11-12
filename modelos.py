@@ -10,18 +10,38 @@ from sklearn.preprocessing import StandardScaler
 
 CARPETA_DATOS=Path(__file__).resolve().parent/"Datos"
 
-VARIABLES=["margen_ebitda","crecimiento_ingresos" ,"capex_ventas","conversion_caja" ,"deuda_neta_ebitda"]
+VARIABLES=[
+    "margen_ebitda","crecimiento_ingresos" ,"capex_ventas","conversion_caja" ,
+    "deuda_neta_ebitda","margen_anterior", "crecimiento_anterior", "log_ingresos",
+]
 
 OBJETIVOS={
     "margen_ebitda": "margen_siguiente",
     "crecimiento_ingresos": "crecimiento_siguiente",
 }
 
+LIMITES={
+    "margen_ebitda": [-1,1],
+    "crecimiento_ingresos": [-0.5, 1],
+    "capex_ventas": [0,0.5],
+    "conversion_caja": [-3 , 3],
+    "deuda_neta_ebitda": [-10, 10],
+}
+
+
 def preparar_panel(ratios):
     df= ratios.copy()
     df=df.sort_values(["ticker","year"])
+    for columna in LIMITES:
+        df[columna]=df[columna].clip(LIMITES[columna][0],LIMITES[columna][1])
+    df["margen_anterior"]=df.groupby("ticker")["margen_ebitda"].shift(1)
+    df["crecimiento_anterior"] =df.groupby("ticker")["crecimiento_ingresos"].shift(1)
+    df["log_ingresos"]= np.log(df["ingresos"].clip(lower=1))
     df["margen_siguiente"] = df.groupby("ticker")["margen_ebitda"].shift(-1)
     df["crecimiento_siguiente"]=df.groupby("ticker")["crecimiento_ingresos"].shift(-1)
+    siguiente_year= df.groupby("ticker")["year"].shift(-1)
+    df.loc[siguiente_year!=df["year"]+1,"margen_siguiente"]=np.nan
+    df.loc[siguiente_year!=df["year"]+1 , "crecimiento_siguiente"]=np.nan
     for columna in VARIABLES:
         df[columna]=df[columna].fillna(df[columna].median())
     return df
@@ -86,7 +106,7 @@ def predecir(panel,mejores):
         datos=panel[panel[objetivo].notna()]
         modelos=crear_modelos()
         for nombre in modelos:
-            modelo =modelos[nombre]
+            modelo=modelos[nombre]
             modelo.fit(datos[VARIABLES], datos[objetivo])
             resultado["pred_"+metrica+"_"+nombre]=modelo.predict(ultimas[VARIABLES])
         resultado["pred_"+metrica+"_Igual que este año"]=ultimas[metrica].values
