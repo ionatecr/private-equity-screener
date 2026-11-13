@@ -1,0 +1,4 @@
+ticker,nombre,year,ingresos,ebit,amortizacion,capex,flujo_operativo,caja,deuda
+PRIV1,Privada Uno,2023,50000,8000,1500,2000,7000,3000,12000
+PRIV1,Privada Uno,2024,58000,9500,1600,2100,8000,3500,11000
+PRIV2,Privada Dos,2024,20000,1500,500,1500,1200,500,9000

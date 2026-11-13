@@ -65,8 +65,9 @@ def ultimo_year_completo(ratios):
     return years[0]
 
 
-def puntuar(ratios,pesos, umbrales):
-    year=ultimo_year_completo(ratios)
+def puntuar(ratios,pesos,umbrales,year = None):
+    if year is None:
+        year=ultimo_year_completo(ratios)
     #print(year)
     df =ratios[ratios["year"]==year].copy()
     direcciones={}
@@ -89,10 +90,36 @@ def puntuar(ratios,pesos, umbrales):
     return df
 
 
-def ranking_respuestas(ratios,respuestas):
+def ranking_respuestas(ratios,respuestas,year =None):
     pesos=test_a_pesos(respuestas)
     umbrales=test_a_umbrales(respuestas)
-    return puntuar(ratios,pesos,umbrales)
+    return puntuar(ratios, pesos,umbrales, year)
+
+
+def backtest(ratios,pesos,umbrales,top= 10):
+    years=list(ratios["year"].unique())
+    years.sort()
+    ultimo=ultimo_year_completo(ratios)
+    filas=[]
+    for year in years:
+        if year>=ultimo:
+            continue
+        if len(ratios[ratios["year"] ==year]) < 10:
+            continue
+        ranking=puntuar(ratios,pesos, umbrales , year)
+        siguiente=ratios[ratios["year"] == year+1][["ticker","crecimiento_ingresos", "margen_ebitda"]]
+        mejores = ranking.head(top)[["ticker"]].merge(siguiente,on="ticker")
+        todas=ranking[["ticker"]].merge(siguiente,on ="ticker")
+        # print(mejores)
+        fila={
+            "year": year,
+            "crecimiento_top": mejores["crecimiento_ingresos"].median(),
+            "crecimiento_universo": todas["crecimiento_ingresos"].median(),
+            "margen_top": mejores["margen_ebitda"].median(),
+            "margen_universo": todas["margen_ebitda"].median(),
+        }
+        filas.append(fila)
+    return pd.DataFrame(filas)
 
 
 def hacer_test():

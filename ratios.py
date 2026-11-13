@@ -5,6 +5,11 @@ import pandas as pd
 
 CARPETA_DATOS=Path(__file__).resolve().parent/"Datos"
 
+COLUMNAS=[
+    "ingresos","ebit","beneficio_antes_impuestos", "intereses" , "amortizacion",
+    "depreciacion","amortizacion_intangibles","capex", "flujo_operativo", "caja","deuda",
+]
+
 def dividir(a, b):
     resultado=a/b
     resultado=resultado.replace([np.inf,-np.inf],np.nan)
@@ -13,6 +18,12 @@ def dividir(a, b):
 
 def calcular_ratios(df):
     df =df.copy()
+    for columna in COLUMNAS:
+        if columna not in df.columns:
+            df[columna]=np.nan
+        df[columna]=pd.to_numeric(df[columna],errors="coerce")
+    if "nombre" not in df.columns:
+        df["nombre"]=df["ticker"]
     df=df.sort_values(["ticker", "year"])
     #print(df)
     ebit_aproximado = df["beneficio_antes_impuestos"]+df["intereses"].fillna(0)

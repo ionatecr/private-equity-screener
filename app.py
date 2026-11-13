@@ -1,12 +1,15 @@
+import base64
+import io
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, Input,Output,ctx, dcc,html
+from dash import Dash, Input,Output,State, ctx,dcc, html
 from plotly.subplots import make_subplots
 
 import scoring
 from api import crear_api
+from ratios import calcular_ratios
 
 CARPETA_DATOS = Path(__file__).resolve().parent/"Datos"
 
@@ -48,6 +51,19 @@ def formato_millones(valor):
     if pd.isna(valor):
         return "-"
     return str(round(valor/1000000))+" M"
+
+
+def puntuar_csv(ratios_csv,respuestas):
+    year =YEAR_DATOS
+    universo=ratios[ratios["year"]==year].copy()
+    universo["origen"]="Cotizada"
+    nuevas=ratios_csv.sort_values("year").groupby("ticker").tail(1).copy()
+    nuevas["year_original"]=nuevas["year"]
+    nuevas["year"]=year
+    nuevas["origen"]="CSV"
+    juntas=pd.concat([universo, nuevas])
+    ranking=scoring.ranking_respuestas(juntas, respuestas,year)
+    return ranking
 
 
 def crear_pregunta(clave):
@@ -128,6 +144,31 @@ app.layout=html.Div(
                     ]),
                     html.Div(id="texto_comparar",style= {"marginTop": "15px"}),
                     dcc.Graph(id="grafico_comparar"),
+                ],
+            ) ,
+        ]),
+        dcc.Tab(label="Backtest",children=[
+            html.Div(
+                style={"backgroundColor": "white","padding": "15px","margin": "10px", "border": "1px solid #dddddd","borderRadius": "5px"},
+                children=[
+                    html.P("Cada año se cogen las 10 mejores empresas con tu tesis y se mira qué pasó al año siguiente, comparado con la mediana de todas.") ,
+                    html.Div(id="texto_backtest"),
+                    dcc.Graph(id="grafico_backtest"),
+                ],
+            ) ,
+        ]),
+        dcc.Tab(label ="Tus empresas", children=[
+            html.Div(
+                style={"backgroundColor": "white","padding": "15px","margin": "10px", "border": "1px solid #dddddd","borderRadius": "5px"},
+                children=[
+                    html.P("Sube un CSV con tus empresas privadas (columnas: ticker, nombre, year, ingresos, ebit, amortizacion, capex, flujo_operativo, caja, deuda) y se puntúan junto a las cotizadas."),
+                    dcc.Upload(
+                        id="subir_csv",
+                        children=html.Div(["Arrastra aquí tu CSV o ",html.A("elígelo")]),
+                        style={"width": "100%" , "height": "60px","lineHeight": "60px" ,"borderWidth": "1px","borderStyle": "dashed","borderRadius": "5px","textAlign": "center"},
+                    ),
+                    html.P(["¿No tienes uno? ", html.A("Descarga la plantilla",href="/assets/plantilla_privadas.csv",download= "plantilla_privadas.csv")]),
+                    html.Div(id = "resultado_csv") ,
                 ],
             ) ,
         ]),
@@ -278,6 +319,90 @@ def comparar_tesis(tesis_1,tesis_2,crecimiento, caja,deuda ,capex,tamano):
     fig.update_yaxes(title = "Puesto con "+tesis_2,autorange="reversed")
     fig.update_layout(height=550)
     return texto,fig
+
+
+@app.callback(
+    Output("texto_backtest","children"),
+    Output("grafico_backtest", "figure"),
+    Input("slider_crecimiento","value"),
+    Input("slider_caja","value"),
+    Input("slider_deuda","value"),
+    Input("slider_capex","value") ,
+    Input("slider_tamano","value"),
+)
+def hacer_backtest(crecimiento,caja, deuda,capex, tamano):
+    respuestas ={"crecimiento": crecimiento,"caja": caja,"deuda": deuda,"capex": capex,"tamano": tamano}
+    pesos=scoring.test_a_pesos(respuestas)
+    umbrales = scoring.test_a_umbrales(respuestas)
+    resultado=scoring.backtest(ratios, pesos, umbrales)
+    resultado= resultado.dropna()
+    #print(resultado)
+    gana = 0
+    for i in range(len(resultado)):
+        if resultado["crecimiento_top"].iloc[i] > resultado["crecimiento_universo"].iloc[i]:
+            gana=gana+1
+    diferencia_crecimiento=(resultado["crecimiento_top"]-resultado["crecimiento_universo"]).mean()
+    diferencia_margen=(resultado["margen_top"]-resultado["margen_universo"]).mean()
+    texto=[
+        html.P("Años en que tu top 10 creció más que la mediana: "+str(gana)+" de "+str(len(resultado))),
+        html.P("Crecimiento extra medio: "+formato_porcentaje(diferencia_crecimiento)),
+        html.P("Margen EBITDA extra medio: "+formato_porcentaje(diferencia_margen)),
+    ]
+    fig=make_subplots(rows=1,cols=2,subplot_titles= ["Crecimiento al año siguiente (%)","Margen EBITDA al año siguiente (%)"])
+    fig.add_trace(go.Bar(x=resultado["year"],y=resultado["crecimiento_top"] * 100,name="Top 10 de tu tesis", marker_color="#1f77b4"),row =1 ,col =1)
+    fig.add_trace(go.Bar(x = resultado["year"],y= resultado["crecimiento_universo"] * 100,name="Mediana de todas", marker_color="#aaaaaa"),row=1,col = 1)
+    fig.add_trace(go.Bar(x=resultado["year"],y=resultado["margen_top"] * 100,name="Top 10 de tu tesis",marker_color ="#1f77b4",showlegend=False),row=1 ,col=2)
+    fig.add_trace(go.Bar(x=resultado["year"],y=resultado["margen_universo"] * 100,name="Mediana de todas",marker_color="#aaaaaa",showlegend =False),row=1,col= 2)
+    fig.update_layout(barmode="group",height=450)
+    return texto,fig
+
+
+@app.callback(
+    Output("resultado_csv","children"),
+    Input("subir_csv" ,"contents"),
+    Input("slider_crecimiento","value"),
+    Input("slider_caja","value"),
+    Input("slider_deuda","value"),
+    Input("slider_capex","value") ,
+    Input("slider_tamano","value"),
+    State("subir_csv","filename"),
+)
+def subir_csv(contenido,crecimiento,caja, deuda,capex, tamano,nombre_archivo):
+    if contenido is None:
+        return ""
+    tipo,texto_base64=contenido.split(",")
+    try:
+        texto_csv=base64.b64decode(texto_base64).decode("utf-8")
+        df= pd.read_csv(io.StringIO(texto_csv))
+    except Exception:
+        return html.P("No se ha podido leer "+str(nombre_archivo)+", tiene que ser un CSV.")
+    for columna in ["ticker","year","ingresos"]:
+        if columna not in df.columns:
+            return html.P("Falta la columna "+columna+". Mira la plantilla.")
+    respuestas ={"crecimiento": crecimiento,"caja": caja,"deuda": deuda,"capex": capex,"tamano": tamano}
+    ratios_csv= calcular_ratios(df)
+    ranking=puntuar_csv(ratios_csv,respuestas)
+    privadas=ranking[ranking["origen"]== "CSV"]
+    textos=[]
+    for i in range(len(privadas)):
+        fila=privadas.iloc[i]
+        textos.append(html.H4(fila["nombre"]+": "+str(fila["score"])+" puntos, puesto "+str(fila["ranking"])+" de "+str(len(ranking))))
+    filas=[html.Tr([html.Th("#"), html.Th("Ticker"),html.Th("Empresa"), html.Th("Score"),html.Th("Crecimiento"),html.Th("Margen EBITDA")])]
+    for i in range(len(ranking)):
+        fila=ranking.iloc[i]
+        if fila["origen"]=="CSV":
+            estilo_fila={"backgroundColor": "#fff3c4","fontWeight": "bold"}
+        else:
+            estilo_fila={}
+        filas.append(html.Tr(style=estilo_fila ,children=[
+            html.Td(str(fila["ranking"])),
+            html.Td(fila["ticker"]),
+            html.Td(fila["nombre"]),
+            html.Td(str(fila["score"])) ,
+            html.Td(formato_porcentaje(fila["crecimiento_ingresos"])) ,
+            html.Td(formato_porcentaje(fila["margen_ebitda"])),
+        ]))
+    return html.Div(textos+[html.Table(filas,style={"width": "100%"})])
 
 
 if __name__=="__main__":
