@@ -13,7 +13,7 @@ from ratios import calcular_ratios
 
 CARPETA_DATOS = Path(__file__).resolve().parent/"Datos"
 
-ratios= pd.read_csv(CARPETA_DATOS/"ratios.csv")
+ratios=scoring.poner_sector(pd.read_csv(CARPETA_DATOS/"ratios.csv"))
 #print(ratios)
 predicciones=pd.read_csv(CARPETA_DATOS/"predicciones.csv")
 
@@ -53,19 +53,6 @@ def formato_millones(valor):
     return str(round(valor/1000000))+" M"
 
 
-def puntuar_csv(ratios_csv,respuestas):
-    year =YEAR_DATOS
-    universo=ratios[ratios["year"]==year].copy()
-    universo["origen"]="Cotizada"
-    nuevas=ratios_csv.sort_values("year").groupby("ticker").tail(1).copy()
-    nuevas["year_original"]=nuevas["year"]
-    nuevas["year"]=year
-    nuevas["origen"]="CSV"
-    juntas=pd.concat([universo, nuevas])
-    ranking=scoring.ranking_respuestas(juntas, respuestas,year)
-    return ranking
-
-
 def crear_pregunta(clave):
     return html.Div(
         children=[
@@ -90,6 +77,11 @@ options_tesis =[
     {"label": "Mi tesis","value": "Mi tesis"},
 ]
 
+sectores =sorted(ratios["sector"].unique())
+options_sector =[]
+for sector in sectores:
+    options_sector.append({"label": sector, "value": sector})
+
 options_top= []
 for n in [10,20,40]:
     options_top.append({"label": "Top "+str(n),"value": n})
@@ -111,7 +103,7 @@ app.layout=html.Div(
             children=[
                 html.Div(
                     style=estilo_izquierda,
-                    children=[html.H3("Test del inversor"),html.Div([html.Button("Value" ,id ="boton_value", n_clicks=0), html.Button("Growth",id="boton_growth",n_clicks=0),html.Button("Neutra",id="boton_neutra",n_clicks = 0)])]+preguntas+[html.H3("Pesos"),html.Div(id= "texto_pesos")],
+                    children= [html.H3("Test del inversor"),html.Div([html.Button("Value", id="boton_value",n_clicks=0),html.Button("Growth",id="boton_growth",n_clicks=0) ,html.Button("Neutra",id= "boton_neutra", n_clicks=0)])]+preguntas+[html.H3("Sectores"),dcc.Dropdown(options=options_sector , value=[],multi= True,placeholder ="Todos los sectores",id ="filtro_sector"),html.H3("Pesos"),html.Div(id="texto_pesos")],
                 ),
                 html.Div(
                     style=estilo_derecha,
@@ -183,6 +175,7 @@ app.layout=html.Div(
     Output("slider_deuda","value"),
     Output("slider_capex", "value"),
     Output("slider_tamano", "value"),
+    Output("slider_horizonte","value"),
     Input("boton_value","n_clicks"),
     Input("boton_growth","n_clicks"),
     Input("boton_neutra", "n_clicks"),
@@ -194,8 +187,8 @@ def elegir_tesis(n_value, n_growth,n_neutra):
     elif ctx.triggered_id== "boton_growth":
         respuestas=scoring.TESIS["Growth"]
     else:
-        respuestas={"crecimiento": 3, "caja": 3,"deuda": 3,"capex": 3,"tamano": 3}
-    return respuestas["crecimiento"], respuestas["caja"], respuestas["deuda"], respuestas["capex"], respuestas["tamano"]
+        respuestas= {"crecimiento": 3, "caja": 3,"deuda": 3,"capex": 3,"tamano": 3,"horizonte": 3}
+    return respuestas["crecimiento"],respuestas["caja"] ,respuestas["deuda"],respuestas["capex"],respuestas["tamano"], respuestas["horizonte"]
 
 
 @app.callback(
@@ -207,13 +200,18 @@ def elegir_tesis(n_value, n_growth,n_neutra):
     Input("slider_deuda","value"),
     Input("slider_capex","value") ,
     Input("slider_tamano","value"),
+    Input("slider_horizonte", "value"),
+    Input("filtro_sector" ,"value"),
     Input("dropdown_top" , "value"),
 )
-def actualizar(crecimiento,caja, deuda,capex, tamano,top):
-    respuestas ={"crecimiento": crecimiento,"caja": caja,"deuda": deuda,"capex": capex,"tamano": tamano}
+def actualizar(crecimiento , caja,deuda,capex, tamano,horizonte, sectores_elegidos,top):
+    respuestas={"crecimiento": crecimiento, "caja": caja,"deuda": deuda , "capex": capex,"tamano": tamano,"horizonte": horizonte}
     pesos=scoring.test_a_pesos(respuestas)
     umbrales = scoring.test_a_umbrales(respuestas)
-    ranking=scoring.puntuar(ratios, pesos,umbrales)
+    universo=ratios
+    if sectores_elegidos is not None and len(sectores_elegidos) > 0:
+        universo=ratios[ratios["sector"].isin(sectores_elegidos)]
+    ranking= scoring.puntuar(universo, pesos,umbrales)
     mejores= ranking.head(top)
     # print(mejores)
 
@@ -226,7 +224,7 @@ def actualizar(crecimiento,caja, deuda,capex, tamano,top):
         fig.add_trace(go.Bar(x=mejores["ticker"],y=mejores["aporte_"+criterio],name=NOMBRES_CRITERIOS[criterio]))
     fig.update_layout(title= "Score de 0 a 100 (lo que aporta cada criterio)",yaxis_range=[0, 100],barmode="stack")
 
-    filas=[html.Tr([html.Th("#"), html.Th("Ticker"), html.Th("Empresa"), html.Th("Score"), html.Th("Crecimiento"), html.Th("Margen EBITDA"), html.Th("Deuda")])]
+    filas = [html.Tr([html.Th("#"), html.Th("Ticker"), html.Th("Empresa"),html.Th("Sector"),html.Th("Score"), html.Th("Crecimiento"),html.Th("Margen EBITDA"), html.Th("Deuda")])]
     for i in range(len(mejores)):
         fila=mejores.iloc[i]
         if fila["cumple_deuda"]:
@@ -237,6 +235,7 @@ def actualizar(crecimiento,caja, deuda,capex, tamano,top):
             html.Td(str(fila["ranking"])),
             html.Td(fila["ticker"]),
             html.Td(fila["nombre"]),
+            html.Td(fila["sector"]),
             html.Td(str(fila["score"])) ,
             html.Td(formato_porcentaje(fila["crecimiento_ingresos"])) ,
             html.Td(formato_porcentaje(fila["margen_ebitda"])),
@@ -286,9 +285,10 @@ def ficha_empresa(ticker):
     Input("slider_deuda","value"),
     Input("slider_capex","value") ,
     Input("slider_tamano","value"),
+    Input("slider_horizonte", "value"),
 )
-def comparar_tesis(tesis_1,tesis_2,crecimiento, caja,deuda ,capex,tamano):
-    mi_tesis= {"crecimiento": crecimiento, "caja": caja,"deuda": deuda,"capex": capex, "tamano": tamano}
+def comparar_tesis(tesis_1, tesis_2,crecimiento,caja,deuda,capex,tamano, horizonte):
+    mi_tesis={"crecimiento": crecimiento,"caja": caja,"deuda": deuda,"capex": capex,"tamano": tamano,"horizonte": horizonte}
     if tesis_1=="Mi tesis":
         respuestas_1=mi_tesis
     else:
@@ -329,9 +329,10 @@ def comparar_tesis(tesis_1,tesis_2,crecimiento, caja,deuda ,capex,tamano):
     Input("slider_deuda","value"),
     Input("slider_capex","value") ,
     Input("slider_tamano","value"),
+    Input("slider_horizonte", "value"),
 )
-def hacer_backtest(crecimiento,caja, deuda,capex, tamano):
-    respuestas ={"crecimiento": crecimiento,"caja": caja,"deuda": deuda,"capex": capex,"tamano": tamano}
+def hacer_backtest(crecimiento, caja, deuda,capex,tamano,horizonte):
+    respuestas={"crecimiento": crecimiento, "caja": caja,"deuda": deuda , "capex": capex,"tamano": tamano,"horizonte": horizonte}
     pesos=scoring.test_a_pesos(respuestas)
     umbrales = scoring.test_a_umbrales(respuestas)
     resultado=scoring.backtest(ratios, pesos, umbrales)
@@ -365,9 +366,10 @@ def hacer_backtest(crecimiento,caja, deuda,capex, tamano):
     Input("slider_deuda","value"),
     Input("slider_capex","value") ,
     Input("slider_tamano","value"),
+    Input("slider_horizonte", "value"),
     State("subir_csv","filename"),
 )
-def subir_csv(contenido,crecimiento,caja, deuda,capex, tamano,nombre_archivo):
+def subir_csv(contenido, crecimiento,caja, deuda,capex,tamano, horizonte, nombre_archivo):
     if contenido is None:
         return ""
     tipo,texto_base64=contenido.split(",")
@@ -379,15 +381,17 @@ def subir_csv(contenido,crecimiento,caja, deuda,capex, tamano,nombre_archivo):
     for columna in ["ticker","year","ingresos"]:
         if columna not in df.columns:
             return html.P("Falta la columna "+columna+". Mira la plantilla.")
-    respuestas ={"crecimiento": crecimiento,"caja": caja,"deuda": deuda,"capex": capex,"tamano": tamano}
+    respuestas={"crecimiento": crecimiento, "caja": caja,"deuda": deuda , "capex": capex,"tamano": tamano,"horizonte": horizonte}
+    pesos=scoring.test_a_pesos(respuestas)
+    umbrales = scoring.test_a_umbrales(respuestas)
     ratios_csv= calcular_ratios(df)
-    ranking=puntuar_csv(ratios_csv,respuestas)
+    ranking=scoring.puntuar_csv(ratios,ratios_csv,pesos,umbrales)
     privadas=ranking[ranking["origen"]== "CSV"]
     textos=[]
     for i in range(len(privadas)):
         fila=privadas.iloc[i]
         textos.append(html.H4(fila["nombre"]+": "+str(fila["score"])+" puntos, puesto "+str(fila["ranking"])+" de "+str(len(ranking))))
-    filas=[html.Tr([html.Th("#"), html.Th("Ticker"),html.Th("Empresa"), html.Th("Score"),html.Th("Crecimiento"),html.Th("Margen EBITDA")])]
+    filas= [html.Tr([html.Th("#"),html.Th("Ticker"),html.Th("Empresa"), html.Th("Sector") ,html.Th("Score"),html.Th("Crecimiento"),html.Th("Margen EBITDA")])]
     for i in range(len(ranking)):
         fila=ranking.iloc[i]
         if fila["origen"]=="CSV":
@@ -398,6 +402,7 @@ def subir_csv(contenido,crecimiento,caja, deuda,capex, tamano,nombre_archivo):
             html.Td(str(fila["ranking"])),
             html.Td(fila["ticker"]),
             html.Td(fila["nombre"]),
+            html.Td(fila["sector"]),
             html.Td(str(fila["score"])) ,
             html.Td(formato_porcentaje(fila["crecimiento_ingresos"])) ,
             html.Td(formato_porcentaje(fila["margen_ebitda"])),

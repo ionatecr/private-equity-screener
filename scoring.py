@@ -10,6 +10,7 @@ PREGUNTAS={
     "deuda": "¿Cuánta deuda estás dispuesto a aceptar?",
     "capex": "¿Aceptas negocios con mucha inversión en capex?",
     "tamano": "¿Prefieres empresas pequeñas (1) o grandes (5)?",
+    "horizonte": "¿Tu horizonte de inversión es corto (1) o largo (5)?",
 }
 
 CRITERIOS={
@@ -21,27 +22,66 @@ CRITERIOS={
     "ingresos": "mayor" ,
 }
 
+SECTORES={
+    "AAPL": "Tecnología","MSFT": "Tecnología" ,"GOOGL": "Tecnología", "AMZN": "Consumo discrecional",
+    "META": "Tecnología","NVDA": "Tecnología" ,"ADBE": "Tecnología","CRM": "Tecnología" ,
+    "ORCL": "Tecnología","CSCO": "Tecnología",
+    "KO": "Consumo básico","PEP": "Consumo básico","PG": "Consumo básico","CL": "Consumo básico",
+    "KMB": "Consumo básico","MDLZ": "Consumo básico","HSY": "Consumo básico","GIS": "Consumo básico",
+    "KHC": "Consumo básico","CPB": "Consumo básico",
+    "JNJ": "Salud" ,"PFE": "Salud" ,"MRK": "Salud","ABT": "Salud","TMO": "Salud",
+    "MMM": "Industria","HON": "Industria", "CAT": "Industria" , "DE": "Industria","GE": "Industria",
+    "HD": "Consumo discrecional","LOW": "Consumo discrecional","WMT": "Consumo básico",
+    "TGT": "Consumo discrecional", "COST": "Consumo básico", "NKE": "Consumo discrecional",
+    "MCD": "Consumo discrecional", "SBUX": "Consumo discrecional", "YUM": "Consumo discrecional",
+    "CMG": "Consumo discrecional",
+}
+
 TESIS={
-    "Value": {"crecimiento": 1,"caja": 5,"deuda": 2,"capex": 1,"tamano": 3},
-    "Growth": {"crecimiento": 5,"caja": 2, "deuda": 3,"capex": 4,"tamano": 3},
+    "Value": {"crecimiento": 1,"caja": 5,"deuda": 2, "capex": 1,"tamano": 3,"horizonte": 3},
+    "Growth": {"crecimiento": 5,"caja": 2,"deuda": 3,"capex": 4, "tamano": 3,"horizonte": 5},
 }
 
 
-def test_a_pesos(respuestas):
+def poner_sector(df):
+    df=df.copy()
+    sectores=[]
+    for ticker in df["ticker"]:
+        if ticker in SECTORES:
+            sectores.append(SECTORES[ticker])
+        else:
+            sectores.append("Otros")
+    df["sector"] =sectores
+    return df
+
+
+def test_a_importancias(respuestas):
+    horizonte =respuestas.get("horizonte",3)
     importancias={}
-    importancias["crecimiento_ingresos"]=respuestas["crecimiento"]
-    importancias["margen_ebitda"]=6-respuestas["crecimiento"]
+    importancias["crecimiento_ingresos"]= max(respuestas["crecimiento"]+horizonte-3,0)
+    importancias["margen_ebitda"] =max(6-respuestas["crecimiento"]+3-horizonte ,0)
     importancias["conversion_caja"]= respuestas["caja"]
     importancias["deuda_neta_ebitda"]=6-respuestas["deuda"]
     importancias["capex_ventas"]=6-respuestas["capex"]
     importancias["ingresos"]=abs(respuestas["tamano"]-3)
+    return importancias
+
+
+def normalizar(importancias):
     total =0
     for criterio in importancias:
         total= total+importancias[criterio]
     pesos= {}
     for criterio in importancias:
-        pesos[criterio]=importancias[criterio]/total
+        if total==0:
+            pesos[criterio]=1/len(importancias)
+        else:
+            pesos[criterio]=importancias[criterio]/total
     return pesos
+
+
+def test_a_pesos(respuestas):
+    return normalizar(test_a_importancias(respuestas))
 
 
 def test_a_umbrales(respuestas):
@@ -120,6 +160,20 @@ def backtest(ratios,pesos,umbrales,top= 10):
         }
         filas.append(fila)
     return pd.DataFrame(filas)
+
+
+def puntuar_csv(ratios , ratios_csv,pesos,umbrales):
+    year=ultimo_year_completo(ratios)
+    universo=ratios[ratios["year"]==year].copy()
+    universo["origen"]="Cotizada"
+    nuevas=ratios_csv.sort_values("year").groupby("ticker").tail(1).copy()
+    nuevas["year_original"] =nuevas["year"]
+    nuevas["year"]=year
+    nuevas["origen"]= "CSV"
+    nuevas["sector"]="Privada"
+    juntas=pd.concat([universo,nuevas])
+    ranking=puntuar(juntas,pesos,umbrales,year)
+    return ranking
 
 
 def hacer_test():

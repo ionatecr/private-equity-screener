@@ -8,10 +8,10 @@ import scoring
 
 CARPETA_DATOS = Path(__file__).resolve().parent/"Datos"
 
-ratios= pd.read_csv(CARPETA_DATOS/"ratios.csv")
+ratios= scoring.poner_sector(pd.read_csv(CARPETA_DATOS/"ratios.csv"))
 predicciones=pd.read_csv(CARPETA_DATOS/"predicciones.csv")
 
-COLUMNAS_RANKING=["ranking","ticker","nombre" , "year","score" , "cumple_deuda","crecimiento_ingresos", "margen_ebitda", "conversion_caja","deuda_neta_ebitda","capex_ventas","ingresos"]
+COLUMNAS_RANKING=["ranking","ticker","nombre" , "sector","year" , "score","cumple_deuda", "crecimiento_ingresos", "margen_ebitda","conversion_caja","deuda_neta_ebitda","capex_ventas", "ingresos"]
 
 argumentos =reqparse.RequestParser()
 argumentos.add_argument("crecimiento", type=int,default=3,location= "args")
@@ -19,6 +19,7 @@ argumentos.add_argument("caja",type=int,default=3 , location="args")
 argumentos.add_argument("deuda",type=int,default=3 , location="args")
 argumentos.add_argument("capex",type = int,default =3, location="args")
 argumentos.add_argument("tamano",type=int ,default =3, location="args")
+argumentos.add_argument("horizonte",type=int,default=3, location="args")
 argumentos.add_argument("top", type=int,default=10,location="args")
 
 
